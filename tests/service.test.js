@@ -64,6 +64,8 @@ test('appointment creation is idempotent and detects configuration conflicts', a
     const input = f.input();
     const a = await f.request('/v1/sessions', input);
     const b = await f.request('/v1/sessions', input);
+    assert.equal(a.data.sessionId, a.data.id);
+    assert.equal(b.data.sessionId, b.data.id);
     assert.equal(a.status, 201);
     assert.equal(b.status, 200);
     assert.equal(a.data.id, b.data.id);

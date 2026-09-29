@@ -58,7 +58,7 @@ function createApp(config) {
     app.use('/v1/sessions', serviceAuth);
     app.post('/v1/sessions', (req, res) => {
         const result = store.create(req.body);
-        res.status(result.created ? 201 : 200).json(result.session);
+        res.status(result.created ? 201 : 200).json({ ...result.session, sessionId: result.session.id });
     });
     app.get('/v1/sessions/:id', (req, res) => res.json({ ...store.get(req.params.id), connectedRoles: signaling.participants(req.params.id) }));
     app.post('/v1/sessions/:id/tickets', (req, res) => {
