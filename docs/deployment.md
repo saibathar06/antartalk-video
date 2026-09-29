@@ -2,7 +2,7 @@
 
 ## Components
 
-Run one always-on Node 24 service, persistent local SQLite volume, an HTTPS reverse proxy with WebSocket support, and a public Coturn instance. Avoid sleeping/free-tier service instances for active calls. Keep the API/signaling service and database on the same host; do not put SQLite on network storage.
+Run one always-on Node 24 service, managed PostgreSQL, an HTTPS reverse proxy with WebSocket support, and a public Coturn instance. Avoid sleeping/free-tier service instances for active calls. The video service may reuse AntarTalk's PostgreSQL server, but it owns and writes only the `antartalk_video` schema.
 
 ```sh
 cp .env.example .env
@@ -28,13 +28,13 @@ Open inbound UDP/TCP 3478, TCP 5349, and the configured UDP relay range. Restric
 
 ## Persistence and operation
 
-- Keep `/app/data` on the named volume. Back up SQLite with a SQLite-aware online backup or stop the service before copying the database and WAL files. Test restoration.
+- Set `DATABASE_URL` to the managed PostgreSQL connection string. Startup applies the idempotent video schema migration; application/booking tables are not modified. Include the `antartalk_video` schema in backups and restoration tests.
 - Run exactly one replica/process. In-memory socket membership is intentional. Multiple replicas require a shared membership/admission store and coordinated signaling, not just extra containers.
 - No server recording or clinical notes are stored. IDs, session windows/state and credential hashes are stored. Select a retention policy with the backend team. Terminal records are retained for idempotency; expired credentials are pruned when issuing tickets. No automatic session-record deletion is enabled.
 - Do not log Authorization headers, JSON bodies, tickets, URL fragments, SDP or ICE addresses. The service reports only generic unexpected-error types, not sensitive request data. Configure your proxy/APM accordingly.
 - Rotate `SERVICE_API_KEY` by coordinating the backend and service deploy. Rotating it does not revoke existing participant credentials; end affected sessions when that is required. Rotate `TURN_SECRET` with a planned transition because live relay refreshes may fail.
-- On restart, database records/connection credentials survive. Clients try bounded signaling reconnection and rebuild their peers. A long outage ends the client flow and requires a fresh authenticated join.
-- Back up before schema changes; this version creates its initial schema automatically and has no migration history yet.
+- On restart, database records, credential hashes and finalized attendance survive. Graceful shutdown persists active participants' final leave time before closing the database. Clients try bounded signaling reconnection and rebuild their peers. A long outage ends the client flow and requires a fresh authenticated join.
+- Back up before schema changes. Versioned SQL migrations live in `migrations/`; the initial migration is safe to apply repeatedly.
 - Build and test pinned dependencies before updating. Browser libraries are served locally; upstream analytics and translation scripts are excluded by the call entry point. The CSP blocks third-party script/connect/image loading.
 
 ## Release checks

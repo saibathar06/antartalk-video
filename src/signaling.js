@@ -12,16 +12,23 @@ function iceConfig(config, claim) {
 
 function attachSignaling(io, store, config) {
     const rooms = new Map();
+    const pendingPresence = new Set();
+    const trackPresence = value => {
+        const promise = Promise.resolve(value);
+        pendingPresence.add(promise);
+        promise.finally(() => pendingPresence.delete(promise));
+        return promise;
+    };
     const kick = (socket, code, message) => {
         socket.emit('callEnded', { code, message });
         socket.disconnect(true);
     };
-    const validate = socket => {
-        try { return store.credential(socket.handshake.auth?.token, 'connection'); }
+    const validate = async socket => {
+        try { return await store.credential(socket.handshake.auth?.token, 'connection'); }
         catch { kick(socket, 'SESSION_CLOSED', 'Call access has ended. Return to AntarTalk to rejoin.'); return null; }
     };
-    io.use((socket, next) => {
-        try { socket.data.claim = store.credential(socket.handshake.auth?.token, 'connection'); next(); }
+    io.use(async (socket, next) => {
+        try { socket.data.claim = await store.credential(socket.handshake.auth?.token, 'connection'); next(); }
         catch (error) { const denied = new Error(error.message); denied.data = { code: error.code || 'INVALID_CREDENTIAL' }; next(denied); }
     });
     io.on('connection', socket => {
@@ -34,38 +41,44 @@ function attachSignaling(io, store, config) {
         }
         let count = 0;
         let resetAt = Date.now() + 10_000;
-        socket.use((packet, next) => {
+        socket.use(async (packet, next) => {
             if (Date.now() >= resetAt) { count = 0; resetAt = Date.now() + 10_000; }
             if (++count > 300) return kick(socket, 'RATE_LIMITED', 'Too many signaling messages.');
-            if (validate(socket)) next();
+            if (await validate(socket)) next();
         });
-        socket.on('join', (input) => {
-            const current = validate(socket);
-            if (!current) return;
-            if (input?.channel !== current.sessionId) return kick(socket, 'FORBIDDEN_ROOM', 'You cannot join that call.');
-            if (socket.data.joined) return;
-            const room = rooms.get(current.sessionId) || new Map();
-            if (room.size >= 2) return kick(socket, 'ROOM_FULL', 'This call already has two participants.');
-            socket.data.joined = true;
-            socket.data.peerInfo = {
-                peerName: current.role === 'doctor' ? 'Doctor' : 'Client',
-                peerVideo: input.peerInfo?.peerVideo === true,
-                peerAudio: input.peerInfo?.peerAudio === true,
-                peerScreen: false,
-            };
-            room.set(socket.id, socket);
-            rooms.set(current.sessionId, room);
-            store.presence(current.sessionId, current.role, true);
-            const peers = Object.fromEntries([...room].map(([key, s]) => [key, s.data.peerInfo]));
-            for (const peer of room.values()) {
-                peer.emit('serverInfo', { roomPeersCount: room.size, redirectURL: false, surveyURL: false });
-                if (peer === socket) continue;
-                peer.emit('addPeer', { peerId: socket.id, peers, shouldCreateOffer: false,
-                    iceServers: iceConfig(config, peer.data.claim), iceTransportPolicy: config.relayOnly ? 'relay' : 'all' });
-                socket.emit('addPeer', { peerId: peer.id, peers, shouldCreateOffer: true,
-                    iceServers: iceConfig(config, current), iceTransportPolicy: config.relayOnly ? 'relay' : 'all' });
+        socket.on('join', async (input) => {
+            if (socket.data.joining) return;
+            socket.data.joining = true;
+            try {
+                const current = await validate(socket);
+                if (!current) return;
+                if (input?.channel !== current.sessionId) return kick(socket, 'FORBIDDEN_ROOM', 'You cannot join that call.');
+                if (socket.data.joined) return;
+                const room = rooms.get(current.sessionId) || new Map();
+                if (room.size >= 2) return kick(socket, 'ROOM_FULL', 'This call already has two participants.');
+                socket.data.joined = true;
+                socket.data.peerInfo = {
+                    peerName: current.role === 'doctor' ? 'Doctor' : 'Client',
+                    peerVideo: input.peerInfo?.peerVideo === true,
+                    peerAudio: input.peerInfo?.peerAudio === true,
+                    peerScreen: false,
+                };
+                room.set(socket.id, socket);
+                rooms.set(current.sessionId, room);
+                await trackPresence(store.presence(current.sessionId, current.role, true));
+                const peers = Object.fromEntries([...room].map(([key, s]) => [key, s.data.peerInfo]));
+                for (const peer of room.values()) {
+                    peer.emit('serverInfo', { roomPeersCount: room.size, redirectURL: false, surveyURL: false });
+                    if (peer === socket) continue;
+                    peer.emit('addPeer', { peerId: socket.id, peers, shouldCreateOffer: false,
+                        iceServers: iceConfig(config, peer.data.claim), iceTransportPolicy: config.relayOnly ? 'relay' : 'all' });
+                    socket.emit('addPeer', { peerId: peer.id, peers, shouldCreateOffer: true,
+                        iceServers: iceConfig(config, current), iceTransportPolicy: config.relayOnly ? 'relay' : 'all' });
+                }
+                socket.emit('callReady', { sessionId: current.sessionId, role: current.role });
+            } finally {
+                socket.data.joining = false;
             }
-            socket.emit('callReady', { sessionId: current.sessionId, role: current.role });
         });
         const target = input => {
             if (!socket.data.joined || typeof input?.peerId !== 'string' || input.peerId === socket.id) return null;
@@ -98,18 +111,31 @@ function attachSignaling(io, store, config) {
         socket.on('disconnect', () => {
             const room = rooms.get(claim.sessionId);
             if (!room?.delete(socket.id)) return;
-            store.presence(claim.sessionId, claim.role, false);
+            if (!socket.data.presenceClosed) trackPresence(store.presence(claim.sessionId, claim.role, false))
+                .catch(error => console.error(JSON.stringify({ level: 'error', event: 'presence_write_failed', errorCode: error?.code || 'UNKNOWN' })));
             for (const peer of room.values()) peer.emit('removePeer', { peerId: socket.id });
             if (!room.size) rooms.delete(claim.sessionId);
         });
     });
-    function revokeInvalid() {
-        for (const socket of io.sockets.sockets.values()) validate(socket);
+    async function revokeInvalid() {
+        await Promise.all([...io.sockets.sockets.values()].map(socket => validate(socket)));
     }
     // Also enforce closure on idle sockets, without waiting for another event.
-    const sweep = setInterval(revokeInvalid, 1000);
+    const sweep = setInterval(() => revokeInvalid().catch(error => console.error(JSON.stringify({
+        level: 'error', event: 'credential_sweep_failed', errorCode: error?.code || 'UNKNOWN'
+    }))), 1000);
     sweep.unref();
-    return { revokeInvalid, stop: () => clearInterval(sweep),
+    async function drain() {
+        for (const room of rooms.values()) {
+            for (const socket of room.values()) {
+                if (socket.data.presenceClosed) continue;
+                socket.data.presenceClosed = true;
+                await trackPresence(store.presence(socket.data.claim.sessionId, socket.data.claim.role, false));
+            }
+        }
+        await Promise.allSettled([...pendingPresence]);
+    }
+    return { revokeInvalid, drain, stop: () => clearInterval(sweep),
         participants: sessionId => [...(rooms.get(sessionId)?.values() || [])].map(s => s.data.claim.role) };
 }
 module.exports = { attachSignaling, iceConfig };

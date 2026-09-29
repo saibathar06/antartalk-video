@@ -22,7 +22,7 @@ The booking team owns appointments and authentication. This service owns call ad
 
 ## Local setup
 
-Requires Node 24+ and npm. The Docker runtime pins Node 24.14.0. The store uses Node's built-in SQLite API (experimental in Node 24); no separate database is required. This version supports **one service process and one persistent local database**.
+Requires Node 24+ and npm. The Docker runtime pins Node 24.14.0. Production uses PostgreSQL and owns only the `antartalk_video` schema, so it can safely reuse AntarTalk's managed PostgreSQL server without writing to booking tables. SQLite remains available only as a local development/test fallback.
 
 ```sh
 npm ci
@@ -44,13 +44,14 @@ For a local browser smoke test with generated video and silent audio (no camera/
 ## Layout
 
 ```text
-src/                 API, SQLite store, configuration, authenticated C2C signaling
+    src/                 API, PostgreSQL/SQLite stores, configuration, authenticated C2C signaling
 public/              Credential exchange, host events, call-page overrides
 vendor/mirotalk/      Vendored C2C frontend, provenance and upstream license
 tests/               Automated security/integration tests and local preview
 docs/                Backend/app/deployment handoff and Coturn configuration
-Dockerfile           Standalone production container
-compose.yaml         Single-instance service with a persistent volume
+    migrations/          Idempotent video-owned PostgreSQL schema
+    Dockerfile           Standalone production container
+    compose.yaml         Single-instance service using managed PostgreSQL
 .env.example         Required configuration; no credentials included
 package-lock.json    Locked server and locally served browser dependencies
 LICENSE              AGPL-3.0; retained upstream licensing
@@ -62,7 +63,7 @@ LICENSE              AGPL-3.0; retained upstream licensing
 - Audio/video, mute, camera controls and leave. Recording, chat, files and screen sharing are outside the exposed appointment UI.
 - Foreground mobile use. Native incoming-call UI and reliable background calling need separate native integration.
 - No booking, payments, notifications, clinical records, media recording, webhooks or billing-duration calculation.
-- Session records persist; live peer connections reconnect after process/network interruption. Run one instance; do not enable clustering or multiple replicas without a shared admission/presence design.
+- Session and finalized attendance records persist in PostgreSQL; live peer connections reconnect after process/network interruption. Run one signaling instance; multiple replicas still require shared room membership and coordinated signaling.
 - Socket closure and time expiry stop the supplied client. Because media is WebRTC between endpoints (including when TURN relays it), signaling cannot forcibly terminate an already-established call between two deliberately modified clients. This is not an SFU with server-controlled media teardown.
 
 Ready for team integration and staging. Production release still requires the deployment and real-device checks in the deployment guide.

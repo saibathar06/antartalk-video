@@ -6,10 +6,13 @@ const { readFileSync } = require('node:fs');
 const path = require('node:path');
 const { Server } = require('socket.io');
 const { CallStore, CallError, hash } = require('./store');
+const { PostgresCallStore } = require('./postgres-store');
 const { attachSignaling } = require('./signaling');
 
-function createApp(config) {
-    const store = new CallStore(config.database);
+async function createApp(config, options = {}) {
+    const store = options.store || (config.databaseUrl
+        ? await new PostgresCallStore(config.databaseUrl).initialize()
+        : new CallStore(config.database));
     const app = express();
     app.disable('x-powered-by');
     const server = createServer(app);
@@ -54,31 +57,35 @@ function createApp(config) {
         }
         next();
     };
-    app.get('/healthz', (req, res) => { store.db.prepare('SELECT 1').get(); res.json({ status: 'ok', node: process.versions.node }); });
+    app.get('/healthz', async (req, res) => {
+        if (store.ping) await store.ping();
+        else store.db.prepare('SELECT 1').get();
+        res.json({ status: 'ok', node: process.versions.node });
+    });
     app.use('/v1/sessions', serviceAuth);
-    app.post('/v1/sessions', (req, res) => {
-        const result = store.create(req.body);
+    app.post('/v1/sessions', async (req, res) => {
+        const result = await store.create(req.body);
         res.status(result.created ? 201 : 200).json({ ...result.session, sessionId: result.session.id });
     });
-    app.get('/v1/sessions/:id', (req, res) => res.json({ ...store.get(req.params.id), connectedRoles: signaling.participants(req.params.id) }));
-    app.post('/v1/sessions/:id/tickets', (req, res) => {
+    app.get('/v1/sessions/:id', async (req, res) => res.json({ ...await store.get(req.params.id), connectedRoles: signaling.participants(req.params.id) }));
+    app.post('/v1/sessions/:id/tickets', async (req, res) => {
         const parentOrigin = req.body?.parentOrigin;
         if (parentOrigin !== undefined && !config.parentOrigins.includes(parentOrigin)) {
             throw new CallError(400, 'INVALID_ORIGIN', 'parentOrigin must be a configured app origin.');
         }
-        const result = store.ticket(req.params.id, req.body?.userId);
+        const result = await store.ticket(req.params.id, req.body?.userId);
         const fragment = new URLSearchParams({ ticket: result.ticket });
         if (parentOrigin) fragment.set('parentOrigin', parentOrigin);
         res.json({ sessionId: req.params.id, launchUrl: `${config.publicOrigin}/call#${fragment}`, expiresAt: result.expiresAt });
     });
-    app.post('/v1/sessions/:id/end', (req, res) => {
-        const result = store.end(req.params.id, req.body?.state || 'ended');
-        signaling.revokeInvalid();
+    app.post('/v1/sessions/:id/end', async (req, res) => {
+        const result = await store.end(req.params.id, req.body?.state || 'ended');
+        await signaling.revokeInvalid();
         res.json(result);
     });
-    app.post('/v1/exchange', (req, res) => {
-        const result = store.exchange(req.body?.ticket);
-        signaling.revokeInvalid();
+    app.post('/v1/exchange', async (req, res) => {
+        const result = await store.exchange(req.body?.ticket);
+        await signaling.revokeInvalid();
         res.json(result);
     });
     app.get('/call', (req, res) => res.type('html').send(html));
@@ -106,8 +113,9 @@ function createApp(config) {
     });
     async function close() {
         signaling.stop();
+        await signaling.drain();
         await new Promise(resolve => io.close(resolve));
-        store.close();
+        await store.close();
     }
     return { app, server, io, store, close };
 }

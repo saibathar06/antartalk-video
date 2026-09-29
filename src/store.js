@@ -197,4 +197,4 @@ class CallStore {
     }
     close() { this.db.close(); }
 }
-module.exports = { CallStore, CallError, fail, hash };
+module.exports = { CallStore, CallError, fail, hash, id, secret };

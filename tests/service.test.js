@@ -14,7 +14,7 @@ const { iceConfig } = require('../src/signaling');
 async function fixture(t) {
     const config = { database: ':memory:', serviceKey: 'test-service-key-with-more-than-32-characters',
         publicOrigin: 'http://localhost:8080', parentOrigins: ['https://app.example.com'], turnUrls: [], relayOnly: false };
-    const service = createApp(config);
+    const service = await createApp(config);
     service.server.listen(0, '127.0.0.1');
     await once(service.server, 'listening');
     const base = `http://127.0.0.1:${service.server.address().port}`;
@@ -243,7 +243,8 @@ test('production configuration fails closed without secrets and TURN; TURN passw
     assert.throws(() => configFromEnv({}), /SERVICE_API_KEY/);
     const env = { SERVICE_API_KEY: 'a'.repeat(64), PUBLIC_ORIGIN: 'https://video.example.com' };
     assert.throws(() => configFromEnv(env), /TURN/);
-    const config = configFromEnv({ ...env, TURN_SECRET: 'b'.repeat(64), TURN_URLS: 'turns:turn.example.com:5349' });
+    const config = configFromEnv({ ...env, TURN_SECRET: 'b'.repeat(64), TURN_URLS: 'turns:turn.example.com:5349',
+        DATABASE_URL: 'postgresql://user:password@database.example.com/video' });
     assert.equal(config.relayOnly, true);
     const ice = iceConfig(config, { session: { closesAt: Date.now() + 60_000 } });
     assert.equal(ice.length, 1);

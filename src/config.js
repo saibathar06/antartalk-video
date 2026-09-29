@@ -22,8 +22,11 @@ function configFromEnv(env = process.env) {
     if (turnUrls.length && !env.TURN_SECRET) throw new Error('TURN_SECRET is required with TURN_URLS.');
     const port = Number(env.PORT || 8080);
     if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('PORT is invalid.');
+    const databaseUrl = env.DATABASE_URL?.trim() || null;
+    if (!development && !databaseUrl) throw new Error('Production requires DATABASE_URL for durable PostgreSQL storage.');
     return { publicOrigin, parentOrigins, serviceKey: env.SERVICE_API_KEY, turnUrls,
         turnSecret: env.TURN_SECRET, relayOnly: env.RELAY_ONLY !== 'false', port,
+        databaseUrl,
         database: env.DATABASE_PATH || path.resolve(__dirname, '../data/calls.sqlite'),
         bindHost: env.BIND_HOST || '0.0.0.0' };
 }
