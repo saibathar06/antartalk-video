@@ -1,0 +1,21 @@
+/* The upstream call UI is retained. Appointment-only actions are hidden. */
+#copyRoomBtn, #shareRoomBtn, #recordingBtn, #chatFileBtn, #initScreenShareBtn,
+#screenShareBtn, #initChatOpenBtn, #chatOpenBtn, #noiseSuppressionDiv {
+    display: none !important;
+}
+#antartalk-notice {
+    position: fixed; inset: 0; z-index: 100000;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    padding: max(24px, env(safe-area-inset-top)) 24px max(24px, env(safe-area-inset-bottom));
+    background: #172033; color: #fff; text-align: center;
+    font: 18px/1.5 system-ui, sans-serif; overflow: auto;
+}
+#antartalk-notice h1 { font-family: system-ui, sans-serif; font-size: clamp(24px, 5vw, 36px); }
+#antartalk-notice p { font-family: system-ui, sans-serif; max-width: 40rem; }
+#antartalk-play {
+    position: fixed; bottom: max(96px, env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%);
+    z-index: 99999; min-height: 48px; max-width: calc(100% - 32px); padding: 12px 24px;
+    border: 2px solid white; border-radius: 12px; background: #172033; color: white;
+    font: 600 16px/1.5 system-ui, sans-serif; cursor: pointer;
+}
+#antartalk-play:focus-visible { outline: 3px solid #ff9ccc; outline-offset: 4px; }

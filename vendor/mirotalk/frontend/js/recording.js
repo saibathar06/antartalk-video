@@ -1,0 +1,183 @@
+'use strict';
+
+class Recording {
+    constructor(stream, recordingLabel, recordingTime, recordingBtn, videoSelect = null, audioSelect = null) {
+        this._stream = stream;
+        this._recordingLabel = recordingLabel;
+        this._recordingBtn = recordingBtn;
+        this._videoSelect = videoSelect;
+        this._audioSelect = audioSelect;
+        this._recordingTime = recordingTime;
+        this._mediaRecorder = null;
+        this._recordedBlobs = [];
+        this._recordingStream = false;
+        this._recStartTs = null;
+        this._trackEndedListeners = [];
+    }
+
+    start() {
+        let options = this.getSupportedMimeTypes();
+        console.log('MediaRecorder options supported', options);
+        options = { mimeType: options[0] };
+        try {
+            this._mediaRecorder = new MediaRecorder(this._stream, options);
+            // Always pass a timeslice so the browser flushes encoded chunks into
+            // recordedBlobs periodically instead of buffering the entire recording
+            // in renderer memory. This makes long (>1h) recordings stable and
+            // avoids MediaRecorder auto-stops caused by memory pressure.
+            this._mediaRecorder.start(1000);
+            this._listenTrackEnded();
+            this._mediaRecorder.addEventListener('start', (e) => {
+                playSound('recStart');
+                console.log('MediaRecorder started', e);
+                this._recordingStream = true;
+                this._recStartTs = performance.now();
+                this.handleElements();
+                startRecordingTimer();
+            });
+            this._mediaRecorder.addEventListener('dataavailable', (e) => {
+                console.log('MediaRecorder data', e);
+                if (e.data && e.data.size > 0) this._recordedBlobs.push(e.data);
+            });
+            this._mediaRecorder.addEventListener('stop', (e) => {
+                this._recordingStream = false;
+                console.log('MediaRecorder stopped', e);
+                this._removeTrackEndedListeners();
+                this.handleElements();
+                stopRecordingTimer();
+                this.downloadRecordedStream();
+            });
+        } catch (err) {
+            this._recordingStream = false;
+            console.error('MediaRecorder error', err);
+            return popupMessage('error', 'MediaRecorder', "Can't start stream recording" + err);
+        }
+    }
+
+    handleElements() {
+        if (this._audioSelect) elemDisable(this._audioSelect, this._recordingStream);
+        if (this._videoSelect) elemDisable(this._videoSelect, this._recordingStream);
+        this._recordingBtn.classList.toggle('red');
+    }
+
+    isStreamRecording() {
+        return this._recordingStream;
+    }
+
+    getSupportedMimeTypes() {
+        const possibleTypes = [
+            'video/webm;codecs=vp9,opus',
+            'video/webm;codecs=vp8,opus',
+            'video/webm;codecs=h264,opus',
+            'video/mp4;codecs=h264,aac',
+            'video/mp4',
+        ];
+        return possibleTypes.filter((mimeType) => {
+            return MediaRecorder.isTypeSupported(mimeType);
+        });
+    }
+
+    getWebmFixerFn() {
+        const fn = window.FixWebmDuration;
+        return typeof fn === 'function' ? fn : null;
+    }
+
+    downloadRecordedStream() {
+        try {
+            const type = this._recordedBlobs[0].type.includes('mp4') ? 'mp4' : 'webm';
+            const rawBlob = new Blob(this._recordedBlobs, { type: 'video/' + type });
+            const recFileName = getDataTimeString() + '-recording.' + type;
+            const currentDevice = isMobileDevice ? 'MOBILE' : 'PC';
+            const blobFileSize = this.bytesToSize(rawBlob.size);
+            popupMessage(
+                'html',
+                'Recording',
+                `<div style="text-align: left;">
+					🔴 &nbsp; Recording Info:
+					<ul>
+                        <li>Time: ${this._recordingTime.innerText}</li>
+						<li>File: ${recFileName}</li>
+						<li>Size: ${blobFileSize}</li>
+					</ul>
+					Please wait to be processed, then will be downloaded to your ${currentDevice} device.
+				</div>`,
+                'top'
+            );
+
+            // Fix WebM duration to make it seekable
+            const fixWebmDuration = async (blob) => {
+                if (type !== 'webm') return blob;
+                try {
+                    const fix = this.getWebmFixerFn();
+                    const durationMs = this._recStartTs ? performance.now() - this._recStartTs : undefined;
+                    const fixed = await fix(blob, durationMs);
+                    return fixed || blob;
+                } catch (e) {
+                    console.warn('WEBM duration fix failed, saving original blob:', e);
+                    return blob;
+                } finally {
+                    this._recStartTs = null;
+                }
+            };
+
+            this._recordingTime.innerText = '0s';
+
+            (async () => {
+                const finalBlob = await fixWebmDuration(rawBlob);
+                this.saveBlobToFile(finalBlob, recFileName);
+            })();
+        } catch (err) {
+            popupMessage('error', 'Recording', 'Recording save failed: ' + err);
+        }
+    }
+
+    bytesToSize(bytes) {
+        if (bytes == 0) return '0 Byte';
+        const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+        const i = parseInt(Math.floor(Math.log(bytes) / Math.log(1024)));
+        return Math.round(bytes / Math.pow(1024, i), 2) + ' ' + sizes[i];
+    }
+
+    saveBlobToFile(blob, fileName) {
+        playSound('recStop');
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.style.display = 'none';
+        a.href = url;
+        a.download = fileName;
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => {
+            document.body.removeChild(a);
+            window.URL.revokeObjectURL(url);
+        }, 100);
+    }
+
+    stop() {
+        this._mediaRecorder.stop();
+    }
+
+    _listenTrackEnded() {
+        this._stream.getTracks().forEach((track) => {
+            const handler = () => {
+                console.warn('Recording track ended during recording:', track.kind, track.label);
+                if (this._mediaRecorder && this._mediaRecorder.state === 'recording') {
+                    try {
+                        this._mediaRecorder.requestData();
+                    } catch (e) {
+                        console.warn('requestData after track ended failed:', e);
+                    }
+                }
+            };
+            track.addEventListener('ended', handler);
+            this._trackEndedListeners.push({ track, handler });
+        });
+    }
+
+    _removeTrackEndedListeners() {
+        this._trackEndedListeners.forEach(({ track, handler }) => {
+            track.removeEventListener('ended', handler);
+        });
+        this._trackEndedListeners = [];
+    }
+}

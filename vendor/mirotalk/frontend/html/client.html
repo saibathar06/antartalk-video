@@ -1,0 +1,361 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <title>AntarTalk video session</title>
+
+        <meta charset="utf-8" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+        <meta
+            name="viewport"
+            content="width=device-width, height=device-height, initial-scale=1.0, maximum-scale=1.0, user-scalable=0"
+        />
+        <meta
+            name="description"
+            content="MiroTalk C2C WebRTC real-time cam-2-cam video calls and screen sharing, end-to-end encrypted."
+        />
+
+        <meta property="og:type" content="app-webrtc" />
+        <meta property="og:site_name" content="MiroTalk C2C" />
+        <meta property="og:title" content="Click the link to join this call." />
+        <meta property="og:description" content="Free WebRTC cam-2-cam video calls." />
+        <meta property="og:image" content="https://c2c.mirotalk.com/images/ui.png" />
+        <meta property="og:url" content="https://c2c.mirotalk.com" />
+
+        <link rel="apple-touch-icon" href="../images/favicon.png" />
+        <link rel="icon" type="image/x-icon" href="../images/favicon.ico" />
+
+        <link rel="stylesheet" href="/lib/fontawesome/css/all.min.css" />
+        <link rel="stylesheet" href="/lib/animate/animate.min.css" />
+        <link
+            rel="stylesheet"
+            href="/lib/highlight/styles/atom-one-dark.min.css"
+        />
+        <link rel="stylesheet" href="../css/chat.css" />
+        <link rel="stylesheet" href="../css/client.css" />
+        <link rel="stylesheet" href="../css/common.css" />
+
+        
+
+        <script defer src="/lib/webrtc-adapter/out/adapter.js"></script>
+        <script defer src="/lib/sweetalert2/dist/sweetalert2.all.min.js"></script>
+        <script defer src="/lib/xss/dist/xss.min.js"></script>
+        <script defer src="/lib/qrious/dist/qrious.min.js"></script>
+        <script defer src="/lib/popper/dist/umd/popper.min.js"></script>
+        <script defer src="/lib/tippy/dist/tippy-bundle.umd.min.js"></script>
+        <script defer src="/lib/ua-parser-js/dist/ua-parser.min.js"></script>
+        <script defer src="/lib/crypto-js/crypto-js.js"></script>
+
+        <script defer src="/lib/emoji-mart/dist/browser.js"></script>
+        <script defer src="/socket.io/socket.io.js"></script>
+        <script defer src="../js/storage.js"></script>
+        <script defer src="../js/swal.js"></script>
+        <script defer src="../js/utils.js"></script>
+        <script defer src="../js/helpers.js"></script>
+        <script defer src="../js/fix-webm-duration.js"></script>
+        <script defer src="../js/recording.js"></script>
+        <script defer src="../js/client.js"></script>
+        
+        <script defer src="../js/noise-processor.js"></script>
+    </head>
+
+    <body>
+        <noscript>You need to enable JavaScript to run this app.</noscript>
+
+        <div id="loadingDivContainer">
+            <div id="loadingDiv" class="center">
+                <div class="loading-spinner">
+                    <div class="spinner-ring"></div>
+                    <img class="spinner-logo" src="../images/logo.svg" alt="" />
+                </div>
+                <h1>Preparing your call</h1>
+                <p class="loading-message">Allow camera and microphone access when prompted.</p>
+            </div>
+        </div>
+
+        <div id="waitingDivContainer" class="fadeIn">
+            <div id="waitingOverlayTop">
+                <div class="waiting-status">
+                    <div class="waiting-dots">
+                        <span class="dot"></span>
+                        <span class="dot"></span>
+                        <span class="dot"></span>
+                    </div>
+                    <span class="waiting-label">Waiting for participant</span>
+                </div>
+            </div>
+            <div id="waitingOverlayBottom">
+                <div class="waiting-buttons">
+                    <button
+                        id="shareRoomBtn"
+                        class="action-btn fas fa-share-nodes"
+                        type="button"
+                        aria-label="Share room"
+                    ></button>
+                    <button
+                        id="copyRoomBtn"
+                        class="action-btn fas fa-copy"
+                        type="button"
+                        aria-label="Copy room link"
+                    ></button>
+                    <button
+                        id="initHideMeBtn"
+                        class="action-btn fas fa-user"
+                        type="button"
+                        aria-label="Hide my video"
+                    ></button>
+                    <button
+                        id="initVideoBtn"
+                        class="action-btn fas fa-video"
+                        type="button"
+                        aria-label="Toggle camera"
+                    ></button>
+                    <button
+                        id="initAudioBtn"
+                        class="action-btn fas fa-microphone"
+                        type="button"
+                        aria-label="Toggle microphone"
+                    ></button>
+                    <button
+                        id="initScreenShareBtn"
+                        class="action-btn fas fa-desktop"
+                        type="button"
+                        aria-label="Share screen"
+                    ></button>
+                    <button
+                        id="initChatOpenBtn"
+                        class="action-btn fas fa-comments"
+                        type="button"
+                        aria-label="Open chat"
+                    ></button>
+                    <button
+                        id="initSettingsBtn"
+                        class="action-btn fas fa-cogs"
+                        type="button"
+                        aria-label="Open settings"
+                    ></button>
+                    <button
+                        id="initLeaveBtn"
+                        class="action-btn fas fa-phone-slash red"
+                        type="button"
+                        aria-label="Leave room"
+                    ></button>
+                </div>
+            </div>
+        </div>
+
+        <div id="buttonsBar">
+            <button id="hideMeBtn" class="action-btn fas fa-user" type="button" aria-label="Hide my video"></button>
+            <button id="videoBtn" class="action-btn fas fa-video" type="button" aria-label="Toggle camera"></button>
+            <div id="audioControl" class="action-control">
+                <span id="pushToTalkStatus" class="push-to-talk-status hidden" role="status" aria-live="polite"
+                    >Transmitting...</span
+                >
+                <button
+                    id="audioBtn"
+                    class="action-btn fas fa-microphone"
+                    type="button"
+                    aria-label="Toggle microphone"
+                ></button>
+            </div>
+            <button
+                id="swapCameraBtn"
+                class="action-btn fas fa-camera-rotate"
+                type="button"
+                aria-label="Switch camera"
+            ></button>
+            <button
+                id="screenShareBtn"
+                class="action-btn fas fa-desktop"
+                type="button"
+                aria-label="Share screen"
+            ></button>
+            <button
+                id="recordingBtn"
+                class="action-btn fas fa-record-vinyl"
+                type="button"
+                aria-label="Toggle recording"
+            ></button>
+            <button id="chatOpenBtn" class="action-btn fas fa-comments" type="button" aria-label="Open chat"></button>
+            <button id="settingsBtn" class="action-btn fas fa-cogs" type="button" aria-label="Open settings"></button>
+            <button
+                id="leaveBtn"
+                class="action-btn fas fa-phone-slash red"
+                type="button"
+                aria-label="Leave room"
+            ></button>
+        </div>
+
+        <div id="settings">
+            <div class="settings-header">
+                <span class="settings-title"><i class="fas fa-sliders"></i> Settings</span>
+                <button
+                    id="settingsCloseBtn"
+                    class="fas fa-times"
+                    type="button"
+                    title="Close settings"
+                    aria-label="Close settings"
+                ></button>
+            </div>
+
+            <div class="settings-content">
+                <div class="settings-section">
+                    <div class="settings-section-title"><i class="fas fa-video"></i> Video</div>
+                    <div class="settings-field">
+                        <label for="videoSource">Camera</label>
+                        <select id="videoSource"></select>
+                    </div>
+                    <div class="settings-field">
+                        <label>Quality</label>
+                        <select id="videoQualitySelect">
+                            <option value="default">Default</option>
+                            <option value="qvga">QVGA</option>
+                            <option value="vga">VGA</option>
+                            <option value="hd">HD</option>
+                            <option value="fhd">FULL HD</option>
+                            <option value="2k">2K</option>
+                            <option value="4k">4K</option>
+                            <option value="6k">6K</option>
+                            <option value="8k">8K</option>
+                        </select>
+                    </div>
+                    <div id="videoFpsDiv" class="settings-field">
+                        <label>Frame rate</label>
+                        <select id="videoFpsSelect">
+                            <option value="default">Default</option>
+                            <option value="60">60 fps</option>
+                            <option value="30">30 fps</option>
+                            <option value="15">15 fps</option>
+                            <option value="5">5 fps</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="settings-section">
+                    <div class="settings-section-title"><i class="fas fa-microphone"></i> Audio</div>
+                    <div class="settings-field">
+                        <label for="audioSource">Microphone</label>
+                        <select id="audioSource"></select>
+                    </div>
+                    <div id="audioOutputDiv" class="settings-field">
+                        <label for="audioOutputSource">Speaker</label>
+                        <select id="audioOutputSource"></select>
+                        <button id="testSpeakerBtn" class="settings-test-btn" type="button">
+                            <i class="fas fa-volume-high"></i> Test speaker
+                        </button>
+                    </div>
+                </div>
+
+                <div class="settings-section">
+                    <div class="settings-section-title"><i class="fa-solid fa-language"></i> Language</div>
+                    <div class="settings-field">
+                        <div id="google_translate_element"></div>
+                    </div>
+                </div>
+
+                <div class="settings-section">
+                    <div class="settings-section-title"><i class="fas fa-sliders"></i> Preferences</div>
+                    <div class="settings-toggle-row">
+                        <label for="switchLightTheme"><i class="fas fa-sun"></i> Light theme</label>
+                        <input id="switchLightTheme" class="toggle" type="checkbox" />
+                    </div>
+                    <div id="noiseSuppressionDiv" class="settings-toggle-row">
+                        <label id="labelNoiseSuppression" for="switchNoiseSuppression"
+                            ><i class="fas fa-ear-listen"></i> Noise suppression</label
+                        >
+                        <input id="switchNoiseSuppression" class="toggle" type="checkbox" />
+                    </div>
+                    <div id="maxVideoQualityDiv" class="settings-toggle-row">
+                        <label for="switchMaxVideoQuality"><i class="fas fa-star"></i> Best quality</label>
+                        <input id="switchMaxVideoQuality" class="toggle" type="checkbox" />
+                    </div>
+                    <div id="aspectRatioDiv" class="settings-toggle-row">
+                        <label for="switchKeepAspectRatio"><i class="fas fa-display"></i> Aspect ratio</label>
+                        <input id="switchKeepAspectRatio" class="toggle" type="checkbox" />
+                    </div>
+                    <div id="pushToTalkDiv" class="settings-toggle-row">
+                        <label for="switchPushToTalk"><i class="fas fa-hand-pointer"></i> Push to talk</label>
+                        <input id="switchPushToTalk" class="toggle" type="checkbox" />
+                    </div>
+                </div>
+
+                <div class="settings-section">
+                    <div class="settings-section-title"><i class="fas fa-info-circle"></i> Session</div>
+                    <div id="recordingDiv" class="settings-info-row">
+                        <label id="recordingLabel">🔴 Recording</label>
+                        <span id="recordingTime">0s</span>
+                    </div>
+                    <div class="settings-info-row">
+                        <label><i class="fas fa-clock"></i> Session time</label>
+                        <span class="notranslate" id="sessionTime">0s</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="chat" class="chat">
+            <div class="header">
+                <span class="title"><i class="fas fa-comments"></i> Chat</span>
+                <div class="header-buttons">
+                    <button
+                        id="chatCleanBtn"
+                        class="fas fa-trash"
+                        type="button"
+                        title="Clear messages"
+                        aria-label="Clear messages"
+                    ></button>
+                    <button
+                        id="chatSaveBtn"
+                        class="fas fa-download"
+                        type="button"
+                        title="Save messages"
+                        aria-label="Save messages"
+                    ></button>
+                    <button
+                        id="chatCloseBtn"
+                        class="fas fa-times"
+                        type="button"
+                        title="Close chat"
+                        aria-label="Close chat"
+                    ></button>
+                </div>
+            </div>
+            <div class="body" id="chatBody">
+                <div id="chatEmptyNotice" class="chat-empty-notice">
+                    <span class="chat-empty-icon" aria-hidden="true"><i class="fas fa-message"></i></span>
+                    <h5 class="chat-empty-title">Start Conversation</h5>
+                    <p class="chat-empty-desc">
+                        There are no messages here yet. Start a conversation by sending a message.
+                    </p>
+                </div>
+            </div>
+            <div class="footer">
+                <div class="footer-buttons">
+                    <button
+                        id="chatEmojiBtn"
+                        class="fas fa-smile"
+                        type="button"
+                        title="Choose emoji"
+                        aria-label="Choose emoji"
+                    ></button>
+                    <button
+                        id="chatFileBtn"
+                        class="fas fa-paperclip"
+                        type="button"
+                        title="Send file"
+                        aria-label="Send file"
+                    ></button>
+                    <input type="file" id="chatFileInput" />
+                    <textarea id="chatInput" rows="1" placeholder="Write a message..." aria-label="Message"></textarea>
+                    <button
+                        id="chatSendBtn"
+                        class="fas fa-paper-plane"
+                        type="button"
+                        title="Send message"
+                        aria-label="Send message"
+                    ></button>
+                </div>
+            </div>
+            <div id="chatEmoji" class="chatEmojiPicker hidden"></div>
+        </div>
+    </body>
+</html>
