@@ -119,7 +119,12 @@ test('two assigned peers connect; server supplies identity and enforces room mem
     assert.equal(peer.peers[client.id].peerName, 'Client');
     assert.equal(peer.peers[doctor.id].peerName, 'Doctor');
     assert.equal(peer.shouldCreateOffer, false);
-    assert.deepEqual((await f.request(`/v1/sessions/${session.id}`)).data.connectedRoles.sort(), ['client', 'doctor']);
+    await new Promise(resolve => setTimeout(resolve, 20));
+    const live = (await f.request(`/v1/sessions/${session.id}`)).data;
+    assert.deepEqual(live.connectedRoles.sort(), ['client', 'doctor']);
+    assert.equal(live.attendance.doctor.joined, true);
+    assert.equal(live.attendance.client.joined, true);
+    assert.ok(live.attendance.overlapSeconds >= 0);
     const forwarded = once(client, 'sessionDescription');
     doctor.emit('relaySDP', { peerId: client.id, sessionDescription: { type: 'offer', sdp: 'test-sdp' } });
     assert.equal((await forwarded)[0].sessionDescription.sdp, 'test-sdp');

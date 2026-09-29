@@ -43,7 +43,19 @@ class CallStore {
                 userId TEXT NOT NULL, kind TEXT NOT NULL, expiresAt INTEGER NOT NULL
             );
             CREATE INDEX IF NOT EXISTS credentials_session ON credentials(sessionId, userId, kind);
+            CREATE TABLE IF NOT EXISTS attendance (
+                sessionId TEXT NOT NULL REFERENCES sessions(id), role TEXT NOT NULL,
+                firstJoinedAt INTEGER, lastJoinedAt INTEGER, lastLeftAt INTEGER,
+                totalConnectedMs INTEGER NOT NULL DEFAULT 0, joinCount INTEGER NOT NULL DEFAULT 0,
+                connected INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (sessionId, role), CHECK (role IN ('doctor', 'client'))
+            );
         `);
+        const columns = new Set(this.db.prepare('PRAGMA table_info(sessions)').all().map(column => column.name));
+        if (!columns.has('overlapStartedAt')) this.db.exec('ALTER TABLE sessions ADD COLUMN overlapStartedAt INTEGER');
+        if (!columns.has('overlapMs')) this.db.exec('ALTER TABLE sessions ADD COLUMN overlapMs INTEGER NOT NULL DEFAULT 0');
+        // A process restart closes any in-memory signaling connections. Never carry stale presence forward.
+        this.db.exec('UPDATE attendance SET connected = 0, lastJoinedAt = NULL; UPDATE sessions SET overlapStartedAt = NULL;');
     }
     transaction(work) {
         this.db.exec('BEGIN IMMEDIATE');
@@ -84,11 +96,25 @@ class CallStore {
         return session;
     }
     describe(session) {
+        const attendance = Object.fromEntries(['doctor', 'client'].map(role => {
+            const row = this.db.prepare('SELECT * FROM attendance WHERE sessionId = ? AND role = ?').get(session.id, role);
+            const liveMs = row?.connected && row.lastJoinedAt ? Math.max(0, this.now() - row.lastJoinedAt) : 0;
+            return [role, {
+                joined: Boolean(row?.firstJoinedAt),
+                firstJoinedAt: row?.firstJoinedAt ? new Date(row.firstJoinedAt).toISOString() : null,
+                lastLeftAt: row?.lastLeftAt ? new Date(row.lastLeftAt).toISOString() : null,
+                connectedSeconds: Math.floor(((row?.totalConnectedMs || 0) + liveMs) / 1000),
+                joinCount: row?.joinCount || 0,
+                connected: Boolean(row?.connected)
+            }];
+        }));
+        const liveOverlap = session.overlapStartedAt ? Math.max(0, this.now() - session.overlapStartedAt) : 0;
         return { ...session, state: session.state !== 'open' ? session.state :
             this.now() >= session.closesAt ? 'expired' : this.now() < session.opensAt ? 'scheduled' : 'open',
             opensAt: new Date(session.opensAt).toISOString(), closesAt: new Date(session.closesAt).toISOString(),
             createdAt: new Date(session.createdAt).toISOString(),
-            endedAt: session.endedAt === null ? null : new Date(session.endedAt).toISOString() };
+            endedAt: session.endedAt === null ? null : new Date(session.endedAt).toISOString(),
+            attendance: { ...attendance, overlapSeconds: Math.floor(((session.overlapMs || 0) + liveOverlap) / 1000) } };
     }
     get(sessionId) { return this.describe(this.row(sessionId)); }
     assertOpen(session) {
@@ -127,10 +153,43 @@ class CallStore {
             return { token, sessionId: claim.sessionId, role: claim.role, expiresAt: new Date(claim.session.closesAt).toISOString() };
         });
     }
+    presence(sessionId, role, connected) {
+        if (!['doctor', 'client'].includes(role)) fail(400, 'INVALID_INPUT', 'Invalid participant role.');
+        return this.transaction(() => {
+            const session = this.row(sessionId);
+            const now = this.now();
+            this.db.prepare(`INSERT INTO attendance (sessionId, role) VALUES (?, ?)
+                ON CONFLICT(sessionId, role) DO NOTHING`).run(sessionId, role);
+            const row = this.db.prepare('SELECT * FROM attendance WHERE sessionId = ? AND role = ?').get(sessionId, role);
+            if (connected && !row.connected) {
+                this.db.prepare(`UPDATE attendance SET connected = 1,
+                    firstJoinedAt = COALESCE(firstJoinedAt, ?), lastJoinedAt = ?, joinCount = joinCount + 1
+                    WHERE sessionId = ? AND role = ?`).run(now, now, sessionId, role);
+            } else if (!connected && row.connected) {
+                this.db.prepare(`UPDATE attendance SET connected = 0, lastLeftAt = ?,
+                    totalConnectedMs = totalConnectedMs + MAX(0, ? - lastJoinedAt), lastJoinedAt = NULL
+                    WHERE sessionId = ? AND role = ?`).run(now, now, sessionId, role);
+            }
+            const connectedCount = this.db.prepare('SELECT COUNT(*) count FROM attendance WHERE sessionId = ? AND connected = 1').get(sessionId).count;
+            if (connectedCount === 2 && session.overlapStartedAt === null) {
+                this.db.prepare('UPDATE sessions SET overlapStartedAt = ? WHERE id = ?').run(now, sessionId);
+            } else if (connectedCount < 2 && session.overlapStartedAt !== null) {
+                this.db.prepare('UPDATE sessions SET overlapMs = overlapMs + MAX(0, ? - overlapStartedAt), overlapStartedAt = NULL WHERE id = ?').run(now, sessionId);
+            }
+            return this.get(sessionId).attendance;
+        });
+    }
     end(sessionId, state) {
         if (!['ended', 'cancelled'].includes(state)) fail(400, 'INVALID_INPUT', 'State must be ended or cancelled.');
         return this.transaction(() => {
-            this.row(sessionId);
+            const session = this.row(sessionId);
+            const now = this.now();
+            this.db.prepare(`UPDATE attendance SET connected = 0, lastLeftAt = ?,
+                totalConnectedMs = totalConnectedMs + CASE WHEN lastJoinedAt IS NULL THEN 0 ELSE MAX(0, ? - lastJoinedAt) END,
+                lastJoinedAt = NULL WHERE sessionId = ? AND connected = 1`).run(now, now, sessionId);
+            if (session.overlapStartedAt !== null) {
+                this.db.prepare('UPDATE sessions SET overlapMs = overlapMs + MAX(0, ? - overlapStartedAt), overlapStartedAt = NULL WHERE id = ?').run(now, sessionId);
+            }
             this.db.prepare("UPDATE sessions SET state = ?, endedAt = ? WHERE id = ? AND state = 'open'").run(state, this.now(), sessionId);
             this.db.prepare('DELETE FROM credentials WHERE sessionId = ?').run(sessionId);
             return this.get(sessionId);

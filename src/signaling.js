@@ -55,6 +55,7 @@ function attachSignaling(io, store, config) {
             };
             room.set(socket.id, socket);
             rooms.set(current.sessionId, room);
+            store.presence(current.sessionId, current.role, true);
             const peers = Object.fromEntries([...room].map(([key, s]) => [key, s.data.peerInfo]));
             for (const peer of room.values()) {
                 peer.emit('serverInfo', { roomPeersCount: room.size, redirectURL: false, surveyURL: false });
@@ -97,6 +98,7 @@ function attachSignaling(io, store, config) {
         socket.on('disconnect', () => {
             const room = rooms.get(claim.sessionId);
             if (!room?.delete(socket.id)) return;
+            store.presence(claim.sessionId, claim.role, false);
             for (const peer of room.values()) peer.emit('removePeer', { peerId: socket.id });
             if (!room.size) rooms.delete(claim.sessionId);
         });
