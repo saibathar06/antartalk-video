@@ -30,6 +30,15 @@ function createApp(config) {
         next();
     });
     app.use(express.json({ limit: '8kb' }));
+    app.use('/v1', (req, res, next) => {
+        const startedAt = Date.now();
+        res.once('finish', () => console.log(JSON.stringify({
+            level: 'info', event: 'video_api_request', method: req.method,
+            path: req.path.replace(/[0-9a-f]{8}-[0-9a-f-]{27,}/gi, ':id'),
+            status: res.statusCode, durationMs: Date.now() - startedAt
+        })));
+        next();
+    });
     // Bounded fixed-window limiter; no unbounded per-IP map. A proxy should add per-IP limits.
     let requests = 0;
     let resetAt = Date.now() + 60_000;
@@ -45,7 +54,7 @@ function createApp(config) {
         }
         next();
     };
-    app.get('/healthz', (req, res) => { store.db.prepare('SELECT 1').get(); res.json({ status: 'ok' }); });
+    app.get('/healthz', (req, res) => { store.db.prepare('SELECT 1').get(); res.json({ status: 'ok', node: process.versions.node }); });
     app.use('/v1/sessions', serviceAuth);
     app.post('/v1/sessions', (req, res) => {
         const result = store.create(req.body);
@@ -89,7 +98,9 @@ function createApp(config) {
     app.use((req, res) => res.status(404).json({ code: 'NOT_FOUND', message: 'Open your video session from AntarTalk.' }));
     app.use((error, req, res, next) => {
         const status = error instanceof CallError ? error.status : error.status === 400 || error.status === 413 ? error.status : 500;
-        if (status === 500) console.error('Call service error:', error.code || error.name); // Never log bodies or credentials.
+        if (status === 500) console.error(JSON.stringify({ level: 'error', event: 'video_api_error',
+            errorType: error?.name || 'Error', errorCode: error?.code || 'UNKNOWN', method: req.method,
+            path: req.path.replace(/[0-9a-f]{8}-[0-9a-f-]{27,}/gi, ':id') })); // Never log bodies or credentials.
         res.status(status).json({ code: error instanceof CallError ? error.code : 'REQUEST_FAILED',
             message: status === 500 ? 'The call service is unavailable. Please retry.' : error instanceof CallError ? error.message : 'Invalid request body.' });
     });
